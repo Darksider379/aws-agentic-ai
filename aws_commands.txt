@@ -1,6 +1,0 @@
-aws sts get-caller-identity --profile rackspace-sandbox   ------> select aws profile
-
-aws ec2 describe-instances \
-  --region eu-north-1 \
-  --query "Reservations[].Instances[].{ID:InstanceId,Name:Tags[?Key=='Name']|[0].Value,Type:InstanceType,State:State.Name,AZ:Placement.AvailabilityZone}" \
-  --output table
