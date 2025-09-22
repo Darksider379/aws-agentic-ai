@@ -1,3 +1,30 @@
+####config imports####
+import os, sys
+from pathlib import Path
+
+def load_env_file(path: str = "config.ini"):
+    try:
+        from dotenv import load_dotenv
+        if Path(path).exists():
+            load_dotenv(dotenv_path=path, override=True)
+            return
+    except Exception:
+        pass
+
+    if Path(path).exists():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+
+env_path = "config.ini"
+load_env_file(env_path)
+
+########main code########
 import boto3, json
 import pandas as pd
 
