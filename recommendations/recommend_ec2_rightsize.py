@@ -1,3 +1,9 @@
+import pandas as pd
+import boto3
+import time
+import os
+
+
 class recommend_ec2_rightsize():
     def recommend_ec2_rightsize(df_hourly: pd.DataFrame) -> list:
         """

@@ -1,3 +1,7 @@
+import pandas as pd
+import boto3
+import time
+import os
 class recommend_s3_tiering():
     def recommend_s3_tiering(df_hourly: pd.DataFrame) -> list:
         """

@@ -1,3 +1,8 @@
+import pandas as pd
+import boto3
+import time
+import os
+
 class run_athena():
     def run_athena(sql: str) -> pd.DataFrame:
         qid = athena.start_query_execution(

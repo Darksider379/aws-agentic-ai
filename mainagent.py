@@ -27,6 +27,14 @@ load_env_file(env_path)
 ########main code########
 import boto3, json
 import pandas as pd
+from functions.run_athena import run_athena
+from functions.hourly_usage_breakdown import hourly_usage_breakdown
+from functions.daily_cost_by_service import daily_cost_by_service
+from recommendations.recommend_ec2_rightsize import recommend_ec2_rightsize
+from recommendations.recommend_s3_tiering import recommend_s3_tiering
+from recommendations.recommend_snapshot_hygiene import recommend_snapshot_hygiene
+from recommendations.write_recommendations_csv_to_s3 import write_recommendations_csv_to_s3
+from recommendations.build_recommendations_table_if_needed import build_recommendations_table_if_needed
 
 bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
 athena  = boto3.client("athena")

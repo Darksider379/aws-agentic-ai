@@ -1,3 +1,8 @@
+import pandas as pd
+import boto3
+import time
+import os
+
 class write_recommendations_csv_to_s3():
     def write_recommendations_csv_to_s3(recs: list) -> str:
         """Write CSV to s3://RESULTS_BUCKET/RESULTS_PREFIX/recommendations/{run_id}.csv and return LOCATION prefix."""

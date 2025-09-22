@@ -1,3 +1,8 @@
+import pandas as pd
+import boto3
+import time
+import os
+
 class recommend_snapshot_hygiene():
     def recommend_snapshot_hygiene(df_hourly: pd.DataFrame) -> list:
         """
