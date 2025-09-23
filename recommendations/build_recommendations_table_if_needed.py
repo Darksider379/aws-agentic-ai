@@ -10,7 +10,7 @@ def build_recommendations_table_if_needed(s3_prefix_uri: str, table_name: str = 
     tbl = table_name or "recommendations"
     ddl = f"""
     CREATE EXTERNAL TABLE IF NOT EXISTS {tbl} (
-      run_ts timestamp,
+      run_ts string,
       category string,
       subtype string,
       region string,

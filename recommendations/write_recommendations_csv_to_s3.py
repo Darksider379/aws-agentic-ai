@@ -42,7 +42,7 @@ def write_recommendations_csv_to_s3(recs: list[dict]) -> str:
             "source_note",
         ]
     )
-    now = dt.datetime.utcnow().isoformat()
+    now = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     for r in recs:
         w.writerow(
             [
