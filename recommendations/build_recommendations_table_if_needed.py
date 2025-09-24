@@ -5,18 +5,21 @@ from functions.run_athena import run_athena
 def build_recommendations_table_if_needed(s3_prefix_uri: str, table_name: str = None):
     """
     Creates an Athena external table over the recommendations CSV prefix if it doesn't exist.
-    s3_prefix_uri should be like: s3://bucket/cost-agent/recommendations/
+    s3_prefix_uri should be like: s3://bucket/cost-agent-v2/recommendations/
     """
     tbl = table_name or "recommendations"
     ddl = f"""
     CREATE EXTERNAL TABLE IF NOT EXISTS {tbl} (
-      run_ts string,
+      run_id string,
+      created_at string,
       category string,
       subtype string,
       region string,
       assumption string,
       metric string,
       est_monthly_saving_usd double,
+      one_time_saving_usd double,
+      action_sql_hint string,
       source_note string
     )
     ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'

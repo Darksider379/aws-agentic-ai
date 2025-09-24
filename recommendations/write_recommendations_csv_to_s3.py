@@ -1,61 +1,59 @@
 # recommendations/write_recommendations_csv_to_s3.py
-import os
 import io
 import csv
-import uuid
-import datetime as dt
+import time
 import boto3
-
-RESULTS_BUCKET = os.environ["RESULTS_BUCKET"]
-RESULTS_PREFIX = os.environ.get("RESULTS_PREFIX", "cost-agent")
+from typing import List, Dict, Optional
+import os
 
 s3 = boto3.client("s3")
 
-
-def write_recommendations_csv_to_s3(recs: list[dict]) -> str:
+def write_recommendations_csv_to_s3(recs: List[Dict], run_id: Optional[str] = None) -> str:
     """
-    Writes recommendations list to:
-      s3://RESULTS_BUCKET/RESULTS_PREFIX/recommendations/<run-id>.csv
-    Returns the S3 prefix (folder) used, which you can use as the Athena LOCATION.
+    Write recommendations to S3 as CSV and return the S3 prefix URI.
+    Adds 'run_id' and 'created_at' columns so Athena can filter the latest run.
+    Keeps 'one_time_saving_usd' optional (defaults to 0.0).
     """
-    prefix = f"{RESULTS_PREFIX}/recommendations/"
-    s3_prefix_uri = f"s3://{RESULTS_BUCKET}/{prefix}"
-
     if not recs:
-        # still return the prefix so the external table LOCATION is stable
-        return s3_prefix_uri
+        recs = []
 
-    run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    key = f"{prefix}{run_id}.csv"
+    bucket = os.environ["RESULTS_BUCKET"]
+    prefix = os.environ.get("RESULTS_PREFIX", "cost-agent")
+    ts = int(time.time())
+    # If run_id is provided, include it in the object key for easier browsing
+    key = f"{prefix}/recommendations/{run_id or 'run'}/{ts}.csv"
+
+    cols = [
+        "run_id",
+        "created_at",
+        "category",
+        "subtype",
+        "region",
+        "assumption",
+        "metric",
+        "est_monthly_saving_usd",
+        "one_time_saving_usd",
+        "action_sql_hint",
+        "source_note",
+    ]
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(
-        [
-            "run_ts",
-            "category",
-            "subtype",
-            "region",
-            "assumption",
-            "metric",
-            "est_monthly_saving_usd",
-            "source_note",
-        ]
-    )
-    now = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    w.writerow(cols)
     for r in recs:
-        w.writerow(
-            [
-                now,
-                r.get("category", ""),
-                r.get("subtype", ""),
-                r.get("region", ""),
-                r.get("assumption", ""),
-                r.get("metric", ""),
-                float(r.get("est_monthly_saving_usd", 0.0)),
-                r.get("source_note", "heuristics-v1"),
-            ]
-        )
+        w.writerow([
+            r.get("run_id", run_id or ""),
+            r.get("created_at", ""),
+            r.get("category", ""),
+            r.get("subtype", ""),
+            r.get("region", ""),
+            r.get("assumption", ""),
+            r.get("metric", ""),
+            float(r.get("est_monthly_saving_usd", 0.0)),
+            float(r.get("one_time_saving_usd", 0.0)),
+            r.get("action_sql_hint", ""),
+            r.get("source_note", ""),
+        ])
 
-    s3.put_object(Bucket=RESULTS_BUCKET, Key=key, Body=buf.getvalue().encode("utf-8"))
-    return s3_prefix_uri
+    s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue().encode("utf-8"), ContentType="text/csv")
+    return f"s3://{bucket}/{prefix}/recommendations/"
