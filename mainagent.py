@@ -36,6 +36,7 @@ load_env_file(env_path)
 # -------------------------------------------------
 # 1) Imports that depend on env
 import json
+import re
 import pandas as pd
 import boto3
 
@@ -51,10 +52,11 @@ ATHENA_RECS_TABLE = os.environ.get("ATHENA_RECS_TABLE", "recommendations")
 # Optional Bedrock/LLM
 USE_LLM          = os.environ.get("USE_LLM", "false").lower() == "true"
 BEDROCK_REGION   = os.environ.get("BEDROCK_REGION", "us-east-1")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620")
+# Default to Nova Pro; overrideable in config.ini
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-pro-v1:0")
 
 # AWS clients
-athena  = boto3.client("athena")
+athena  = boto3.client("athena", region_name=os.environ.get("AWS_REGION", None))
 bedrock = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
 
 # -------------------------------------------------
@@ -86,47 +88,227 @@ def query_cost_summary_topn(limit: int = 20) -> pd.DataFrame:
     return df
 
 # -------------------------------------------------
-# 4) Bedrock LLM call (returns list[dict] with same schema as heuristics)
+# 4) Bedrock (Nova Pro) helpers via CONVERSE API
+
+def _extract_json_array(text: str) -> str:
+    """Extract a JSON array from arbitrary text."""
+    if not text:
+        raise ValueError("Empty model output")
+
+    # ```json ... ```
+    fence = re.search(r"```json\s*(.+?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        return fence.group(1).strip()
+
+    # First [...] span with balanced brackets
+    start = text.find("[")
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1].strip()
+
+    # Last resort: newline-delimited JSON objects -> array
+    lines = [ln.strip().rstrip(",") for ln in text.splitlines() if ln.strip()]
+    objs = []
+    for ln in lines:
+        try:
+            obj = json.loads(ln)
+            if isinstance(obj, dict):
+                objs.append(obj)
+        except Exception:
+            pass
+    if objs:
+        return json.dumps(objs)
+
+    raise ValueError(f"Could not find JSON array in model output. First 300 chars:\n{text[:300]}")
+
+def _converse_text(
+    user_text: str,
+    system_text: str | None = None,
+    max_tokens: int = 600,
+    temperature: float = 0.2,
+    top_p: float = 0.9,
+) -> str:
+    """
+    Single-turn text response using Bedrock Converse.
+    """
+    messages = [{"role": "user", "content": [{"text": user_text}]}]
+    kwargs = {
+        "modelId": BEDROCK_MODEL_ID,
+        "messages": messages,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+    }
+    if system_text:
+        kwargs["system"] = [{"text": system_text}]
+
+    resp = bedrock.converse(**kwargs)
+    out_msg = resp.get("output", {}).get("message", {})
+    content = out_msg.get("content", [])
+    for block in content:
+        if "text" in block and isinstance(block["text"], str):
+            return block["text"].strip()
+    return ""
+
+def _converse_json_array(
+    instruction: str,
+    system_text: str | None = None,
+    max_tokens: int = 900,
+    temperature: float = 0.1,
+    top_p: float = 0.9,
+) -> list:
+    """
+    Ask Nova Pro for a STRICT JSON array.
+    Strategy:
+      1) Try JSON responseFormat.
+      2) If not pure JSON array, try to extract first balanced array.
+      3) Retry without responseFormat but with ultra-strict prompt + few-shot.
+    """
+    def _read_text_from_converse(resp: dict) -> str:
+        out_msg = resp.get("output", {}).get("message", {})
+        txt = ""
+        for block in out_msg.get("content", []):
+            if "text" in block:
+                txt += block["text"]
+        return txt.strip()
+
+    # ---------- Attempt 1: JSON responseFormat ----------
+    messages = [{"role": "user", "content": [{"text": instruction}]}]
+    kwargs = {
+        "modelId": BEDROCK_MODEL_ID,
+        "messages": messages,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+        "responseFormat": {"type": "JSON"},  # honored on newer Nova runtimes
+    }
+    if system_text:
+        kwargs["system"] = [{"text": system_text}]
+
+    try:
+        resp = bedrock.converse(**kwargs)
+        txt = _read_text_from_converse(resp)
+
+        # Try direct parse
+        try:
+            val = json.loads(txt)
+            if isinstance(val, list):
+                return val
+            if isinstance(val, dict):
+                for _, v in val.items():
+                    if isinstance(v, list):
+                        return v
+        except Exception:
+            pass
+
+        # Try extracting first [...] span
+        arr = _extract_json_array(txt)
+        return json.loads(arr)
+    except Exception as e:
+        last_err = e  # noqa: F841
+
+    # ---------- Attempt 2: No JSON mode, stricter prompt + few-shot ----------
+    strict_system = (
+        (system_text + " ") if system_text else ""
+    ) + "Return ONLY a JSON array. Do not add any prose, backticks, or explanations."
+
+    few_shot = (
+        "You must respond with a JSON array only.\n"
+        "Valid example:\n"
+        '[{"category":"EC2 Right-size","subtype":"m5.large→m7g.large",'
+        '"recommendation":"Move to Graviton m7g.large for CPU-bound workloads",'
+        '"estimated_saving_usd":123.45,"region":"us-east-1"}]'
+    )
+
+    messages2 = [
+        {"role": "user", "content": [{"text": few_shot}]},
+        {"role": "assistant", "content": [{"text":
+            '[{"category":"EC2 Right-size","subtype":"m5.large→m7g.large","recommendation":"...",'
+            '"estimated_saving_usd":100.0,"region":"us-east-1"}]'}]},
+        {"role": "user", "content": [{"text": instruction}]},
+    ]
+    kwargs2 = {
+        "modelId": BEDROCK_MODEL_ID,
+        "messages": messages2,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+            "stopSequences": ["\n\nExplanation:", "```"],
+        },
+        "system": [{"text": strict_system}],
+    }
+
+    resp2 = bedrock.converse(**kwargs2)
+    txt2 = _read_text_from_converse(resp2)
+
+    if not txt2.strip().startswith("["):
+        print("[llm][debug] Non-array start; raw (first 1200 chars):\n", txt2[:1200])
+
+    try:
+        val2 = json.loads(txt2)
+        if isinstance(val2, list):
+            return val2
+        if isinstance(val2, dict):
+            for v in val2.values():
+                if isinstance(v, list):
+                    return v
+            return [val2]
+    except Exception:
+        pass
+
+    arr2 = _extract_json_array(txt2)
+    return json.loads(arr2)
+
+# -------------------------------------------------
+# 5) Bedrock LLM call (returns list[dict] with same schema as heuristics)
 def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame) -> list[dict]:
+    """Call Bedrock LLM (Nova Pro by default via Converse) and return list of rec dicts."""
     if df_summary.empty:
         return []
 
-    # Prepare minimal CSV for the prompt
     summary_csv = df_summary.to_csv(index=False)
 
-    system = (
-        "You are a cloud cost optimization assistant. "
-        "Given the following AWS cost breakdown (CSV), propose savings opportunities. "
-        "Return STRICT JSON array of objects with keys: "
-        "category, subtype, recommendation, estimated_saving_usd, region."
+    system_text = (
+        "You are a precise AWS FinOps assistant. "
+        "Return ONLY a JSON array with no prose or code fences."
     )
-    user = f"CSV:\n{summary_csv}\n"
 
-    body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 600,
-        "system": system,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}],
-    }
+    prompt_text = (
+        "Given the following AWS cost breakdown (CSV), propose savings opportunities.\n"
+        "Output MUST be a JSON array ONLY. Do not include backticks, explanations, or extra fields.\n"
+        "Each array item MUST have exactly these keys: "
+        "category, subtype, recommendation, estimated_saving_usd, region.\n"
+        'Example: [{"category":"EC2 Right-size","subtype":"m5.large→m7g.large",'
+        '"recommendation":"Move m5.large to m7g.large where supported",'
+        '"estimated_saving_usd":120.0,"region":"us-east-1"}]\n'
+        "\nCSV:\n"
+        f"{summary_csv}\n"
+        "\nReturn ONLY the JSON array."
+    )
 
     try:
-        resp = bedrock.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(body),
+        items = _converse_json_array(
+            instruction=prompt_text,
+            system_text=system_text,
+            max_tokens=900,
+            temperature=0.1,
+            top_p=0.9,
         )
-        payload = json.loads(resp["body"].read())
 
-        text = ""
-        for block in payload.get("content", []):
-            if block.get("type") == "text":
-                text += block.get("text", "")
-
-        # Try to parse JSON; if it isn't valid JSON, fallback gracefully
-        llm_items = json.loads(text)
         out: list[dict] = []
-        for it in llm_items:
+        for it in items:
             out.append(
                 {
                     "category": it.get("category", "LLM Suggestion"),
@@ -140,9 +322,10 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame) -> list[dict]:
                 }
             )
         return out
+
     except Exception as e:
-        print(f"[bedrock] invoke failed or parse error: {e}")
-        # Fallback suggestion so the pipeline still writes something
+        print(f"[bedrock] converse failed or parse error: {e}")
+        # Fallback so pipeline continues
         return [
             {
                 "category": "S3 Tiering",
@@ -157,7 +340,7 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame) -> list[dict]:
         ]
 
 # -------------------------------------------------
-# 5) Main handler
+# 6) Main handler
 def handler(event=None, context=None):
     print(f"[cfg] DB={ATHENA_DB} TABLE={ATHENA_TABLE} OUT={ATHENA_OUTPUT} RECS_TABLE={ATHENA_RECS_TABLE}")
     # Pull hourly breakdown (for heuristics)
@@ -197,7 +380,7 @@ def handler(event=None, context=None):
     }
 
 # -------------------------------------------------
-# 6) Local run
+# 7) Local run
 if __name__ == "__main__":
     out = handler()
     print(json.dumps(out, indent=2))
