@@ -1,0 +1,44 @@
+provider,service_category,service_name,sku_hint,price_usd,unit_raw,unit_standardized,price_period,region,pricing_link,source_notes
+GCP,Compute,Compute Engine,,,,,,global,https://cloud.google.com/compute/pricing,no sample price provided
+GCP,Compute,Google Kubernetes Engine,,0.1,cluster hour,,hour,global,https://cloud.google.com/kubernetes-engine/pricing,parsed from sample price
+GCP,Compute,App Engine,F1 instance,0.0579,hour,,hour,global,https://cloud.google.com/appengine/pricing,parsed from sample price
+GCP,Compute,Cloud Run,Instance-based,1.80E-05,vCPU-second,vCPU,second,global,https://cloud.google.com/run/pricing,parsed from sample price
+GCP,Compute,Cloud Functions,1st gen,0.4,million invocations,invocation,,global,https://cloud.google.com/functions/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Storage,US multi-region,0.026,GB month,GB,,global,https://cloud.google.com/storage/pricing,parsed from sample price
+GCP,Storage & Databases,Persistent Disk,Standard,0.04,GB month,GB,,global,https://cloud.google.com/compute/disks-image-pricing,parsed from sample price
+GCP,Storage & Databases,Cloud SQL,db-g1-small,0.035,hour,,hour,global,https://cloud.google.com/sql/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Bigtable,,0.65,node hour,node,hour,global,https://cloud.google.com/bigtable/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Bigtable,SSD,0.17,GB per month,GB,month,global,https://cloud.google.com/bigtable/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Spanner,,0.9,node hour,node,hour,global,https://cloud.google.com/spanner/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Spanner,SSD,0.3,GB per month,GB,month,global,https://cloud.google.com/spanner/pricing,parsed from sample price
+GCP,Storage & Databases,Firestore,,0.15,GB per month,GB,month,global,https://cloud.google.com/firestore/pricing,parsed from sample price
+GCP,Storage & Databases,Firestore,,0.03,100k reads,,,global,https://cloud.google.com/firestore/pricing,parsed from sample price
+GCP,Storage & Databases,Cloud Memorystore,Basic Tier M2,0.027,GB hour,GB,hour,global,https://cloud.google.com/memorystore/pricing,parsed from sample price
+GCP,Storage & Databases,AlloyDB for PostgreSQL,"2 vCPU, 16 GiB RAM",143.68,month,,,global,https://cloud.google.com/alloydb/pricing,parsed from sample price
+GCP,Networking,Virtual Private Cloud (VPC),Premium Tier egress,0.12,GB,GB,,global,https://cloud.google.com/vpc/network-pricing,parsed from sample price
+GCP,Networking,Cloud CDN,cache egress,0.08,GB,GB,,global,https://cloud.google.com/cdn/pricing,parsed from sample price
+GCP,Networking,Cloud Load Balancing,first 5 forwarding rules,0.025,hour,,hour,global,https://cloud.google.com/load-balancing/pricing,parsed from sample price
+GCP,Networking,Cloud DNS,,0.2,managed zone month,,,global,https://cloud.google.com/dns/pricing,parsed from sample price
+GCP,Networking,Cloud DNS,,0.4,million queries,,,global,https://cloud.google.com/dns/pricing,parsed from sample price
+GCP,Networking,Cloud Interconnect,Partner Interconnect 50 Mbps,0.05417,hour,,hour,global,https://cloud.google.com/interconnect/pricing,parsed from sample price
+GCP,Networking,Cloud Armor,"Standard Tier, per security policy",5,month,,,global,https://cloud.google.com/armor/pricing,parsed from sample price
+GCP,Big Data & Analytics,BigQuery,analysis,6.25,TiB,,,global,https://cloud.google.com/bigquery/pricing,parsed from sample price
+GCP,Big Data & Analytics,BigQuery,storage,0.023,GB per month,GB,month,global,https://cloud.google.com/bigquery/pricing,parsed from sample price
+GCP,Big Data & Analytics,Cloud Dataflow,,0.056,vCPU hour,vCPU,hour,global,https://cloud.google.com/dataflow/pricing,parsed from sample price
+GCP,Big Data & Analytics,Cloud Dataflow,Batch,0.003557,GB-hour,GB,hour,global,https://cloud.google.com/dataflow/pricing,parsed from sample price
+GCP,Big Data & Analytics,Dataproc,,0.01,vCPU hour,vCPU,hour,global,https://cloud.google.com/dataproc/pricing,parsed from sample price
+GCP,Big Data & Analytics,Cloud Composer,"small environment, idle",400,month,,,global,https://cloud.google.com/composer/pricing,parsed from sample price
+GCP,Big Data & Analytics,Cloud Pub/Sub,after free tier,40,TiB,,,global,https://cloud.google.com/pubsub/pricing,parsed from sample price
+GCP,Security,Cloud IAM,,,,,,global,https://cloud.google.com/iam/pricing,unparsed; manual review
+GCP,Security,Cloud Security Command Center,,,,,,global,https://cloud.google.com/security-command-center/pricing,unparsed; manual review
+GCP,Security,Cloud Key Management Service (KMS),,0.06,active key version month,,,global,https://cloud.google.com/kms/pricing,parsed from sample price
+GCP,Security,Cloud Key Management Service (KMS),,0.03,"10,000 oations",,,global,https://cloud.google.com/kms/pricing,parsed from sample price
+GCP,Developer Tools,Cloud Build,,0.006,minute (e2-standard-2) after free tier,,,global,https://cloud.google.com/build/pricing,parsed from sample price
+GCP,Management Tools,Cloud Monitoring,,0.258,MiB after free tier,,,global,https://cloud.google.com/monitoring/pricing,parsed from sample price
+GCP,Management Tools,Cloud Logging,,0.5,GB after free tier,GB,,global,https://cloud.google.com/logging/pricing,parsed from sample price
+GCP,AI & Machine Learning,Vertex AI,n1-standard-4 training,0.218499,hour,,hour,global,https://cloud.google.com/vertex-ai/pricing,parsed from sample price
+GCP,AI & Machine Learning,Cloud TPU,v4,3.22,chip-hour,,hour,global,https://cloud.google.com/tpu/pricing,parsed from sample price
+GCP,AI & Machine Learning,Cloud Vision AI,,1.5,"1,000 units (Label Detection) after free tier",,,global,https://cloud.google.com/vision/pricing,parsed from sample price
+GCP,AI & Machine Learning,Cloud Natural Language API,,0.001,"1,000-character unit (Sentiment Analysis) after free tier",,,global,https://cloud.google.com/natural-language/pricing,parsed from sample price
+GCP,AI & Machine Learning,Speech-to-Text,,0.024,minute (standard model) after free tier,,,global,https://cloud.google.com/speech-to-text/pricing,parsed from sample price
+GCP,AI & Machine Learning,Text-to-Speech,,4.00E-06,character (standard voice) after free tier,,,global,https://cloud.google.com/text-to-speech/pricing,parsed from sample price
