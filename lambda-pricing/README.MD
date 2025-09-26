@@ -19,4 +19,4 @@ For bedrock alias
   --statement-id bedrock-invocation-bedrock-alias \
   --action lambda:InvokeFunction \
   --principal bedrock.amazonaws.com \
-  --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/XCET2ZMQI6
+  --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/GXY0ETOUIJ
