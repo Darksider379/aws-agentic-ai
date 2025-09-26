@@ -3,7 +3,7 @@ Command to fix the permission issue when bedrock tries to invoke Lambda function
 (.venv) chandramukherjee@FVFH83M2Q05N aws-agentic-ai %   aws lambda add-permission \
   --region us-east-1 \
   --function-name cross-cloud-pricing \
-  --qualifier 2 \
+  --qualifier 4 \
   --statement-id bedrock-invocation \
   --action lambda:InvokeFunction \
   --principal bedrock.amazonaws.com \
@@ -15,7 +15,7 @@ For bedrock alias
   (.venv) chandramukherjee@FVFH83M2Q05N aws-agentic-ai %   aws lambda add-permission \
   --region us-east-1 \
   --function-name cross-cloud-pricing \
-  --qualifier 2 \
+  --qualifier 4 \
   --statement-id bedrock-invocation-bedrock-alias \
   --action lambda:InvokeFunction \
   --principal bedrock.amazonaws.com \
