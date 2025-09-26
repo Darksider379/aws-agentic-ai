@@ -1,0 +1,231 @@
+{
+    "openapi": "3.0.1",
+    "info": {
+      "title": "Cross Cloud Pricing API",
+      "version": "1.1.0",
+      "description": "Retrieve cheapest cross-cloud pricing for common service groups.\nIn Bedrock Agents, this spec is used to shape tool inputs; execution\nis via the connected Lambda, not the servers URL."
+    },
+    "servers": [
+      {
+        "url": "https://zbwc0uszg3.execute-api.us-east-1.amazonaws.com/default",
+        "description": "API Gateway endpoint (not used by Bedrock Agents at runtime)"
+      }
+    ],
+    "paths": {
+      "/cross-cloud-pricing": {
+        "post": {
+          "summary": "Get cross-cloud service pricing",
+          "description": "Returns the cheapest offering per provider for the requested service group.",
+          "operationId": "getCrossCloudPricing",
+          "requestBody": {
+            "required": true,
+            "description": "JSON payload specifying service group and optional filters.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PricingRequest" },
+                "examples": {
+                  "kubernetes-basic": {
+                    "value": {
+                      "service_group": "kubernetes",
+                      "regions": ["us-east-1", "eastus", "us-east4"],
+                      "providers": ["AWS", "Azure", "GCP"],
+                      "top_k": 1,
+                      "query": "cheapest kubernetes in east"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful response with cheapest offerings and full result set.",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/PricingResponse" },
+                  "examples": {
+                    "ok": {
+                      "value": {
+                        "query": {
+                          "service_group": "kubernetes",
+                          "regions": ["us-east-1", "eastus", "us-east4"],
+                          "providers": ["AWS", "Azure", "GCP"],
+                          "top_k": 1,
+                          "query": "cheapest kubernetes in east"
+                        },
+                        "assumptions": [
+                          "Compared control-plane hourly fees only; node/compute costs not included."
+                        ],
+                        "results": [
+                          {
+                            "provider": "AWS",
+                            "service_name": "EKS (control plane)",
+                            "region": "us-east-1",
+                            "price_usd": 0.1,
+                            "unit_standardized": "cluster-hour",
+                            "price_period": "per hour",
+                            "pricing_link": "https://aws.amazon.com/eks/pricing/"
+                          },
+                          {
+                            "provider": "Azure",
+                            "service_name": "AKS (control plane)",
+                            "region": "eastus",
+                            "price_usd": 0.0,
+                            "unit_standardized": "cluster-hour",
+                            "price_period": "per hour",
+                            "pricing_link": "https://azure.microsoft.com/pricing/details/kubernetes-service/"
+                          },
+                          {
+                            "provider": "GCP",
+                            "service_name": "GKE Autopilot (control plane)",
+                            "region": "us-east4",
+                            "price_usd": 0.0,
+                            "unit_standardized": "cluster-hour",
+                            "price_period": "per hour",
+                            "pricing_link": "https://cloud.google.com/kubernetes-engine/pricing"
+                          }
+                        ],
+                        "cheapest": {
+                          "provider": "Azure",
+                          "service_name": "AKS (control plane)",
+                          "region": "eastus",
+                          "price_usd": 0.0,
+                          "unit_standardized": "cluster-hour",
+                          "price_period": "per hour",
+                          "pricing_link": "https://azure.microsoft.com/pricing/details/kubernetes-service/"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad request (e.g., missing required field).",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                  "examples": {
+                    "missing": {
+                      "value": { "error": "Missing required field 'service_group' or provide 'query'." }
+                    }
+                  }
+                }
+              }
+            },
+            "500": {
+              "description": "Server error",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                  "examples": {
+                    "generic": {
+                      "value": { "error": "Unhandled error: <details>" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "PricingRequest": {
+          "type": "object",
+          "properties": {
+            "service_group": {
+              "type": "string",
+              "description": "Service category to compare.",
+              "enum": ["kubernetes", "object_storage", "functions", "managed_sql", "compute"]
+            },
+            "regions": {
+              "type": "array",
+              "description": "Optional list of regions to filter (e.g., us-east-1, eastus, us-east4).",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "providers": {
+              "type": "array",
+              "description": "Optional list of providers to include.",
+              "items": {
+                "type": "string",
+                "enum": ["AWS", "Azure", "GCP"]
+              },
+              "uniqueItems": true
+            },
+            "top_k": {
+              "type": "integer",
+              "description": "Cheapest N rows per provider to return.",
+              "minimum": 1,
+              "maximum": 3,
+              "default": 1
+            },
+            "query": {
+              "type": "string",
+              "description": "Free-text hint if service_group is unknown (e.g., \"cheapest kubernetes in east\")."
+            }
+          },
+          "oneOf": [
+            { "required": ["service_group"] },
+            { "required": ["query"] }
+          ]
+        },
+        "PricingResponse": {
+          "type": "object",
+          "properties": {
+            "query": { "$ref": "#/components/schemas/QueryEcho" },
+            "assumptions": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Assumptions applied by the service."
+            },
+            "results": {
+              "type": "array",
+              "description": "Cheapest entries per provider under the filters.",
+              "items": { "$ref": "#/components/schemas/ResultItem" }
+            },
+            "cheapest": { "$ref": "#/components/schemas/ResultItem" }
+          }
+        },
+        "QueryEcho": {
+          "type": "object",
+          "properties": {
+            "service_group": { "type": "string" },
+            "regions": { "type": "array", "items": { "type": "string" } },
+            "providers": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["AWS", "Azure", "GCP"] }
+            },
+            "top_k": { "type": "integer" },
+            "query": { "type": "string", "nullable": true }
+          }
+        },
+        "ResultItem": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "Cloud provider name.",
+              "enum": ["AWS", "Azure", "GCP"]
+            },
+            "service_name": { "type": "string", "description": "Service/SKU display name." },
+            "region": { "type": "string", "description": "Region for this price row." },
+            "price_usd": { "type": "number", "format": "float", "description": "Price in USD." },
+            "unit_standardized": { "type": "string", "description": "Standardized unit (e.g., cluster-hour, GB)." },
+            "price_period": { "type": "string", "description": "Period basis (e.g., per hour, per month)." },
+            "pricing_link": { "type": "string", "format": "uri", "description": "URL to provider pricing page." }
+          }
+        },
+        "ErrorResponse": {
+          "type": "object",
+          "properties": {
+            "error": { "type": "string", "description": "Error message." }
+          }
+        }
+      }
+    }
+  }
+  

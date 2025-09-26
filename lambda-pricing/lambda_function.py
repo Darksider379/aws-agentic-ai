@@ -1,6 +1,7 @@
 # lambda_function.py
 # Bedrock Agent (OpenAPI tool) + API Gateway compatible Lambda
-# - If invoked by a Bedrock Agent, returns Bedrock Agent schema
+# - If invoked by a Bedrock Agent (OpenAPI API-style), returns the API-style schema
+# - If invoked by a Bedrock Agent (function-style), returns the function-style schema
 # - If invoked via API Gateway / direct invoke, returns statusCode/body
 
 import os
@@ -12,15 +13,15 @@ from typing import Optional, List, Dict, Tuple, Any
 import boto3
 from botocore.exceptions import ClientError
 
-# --------- Config (Environment) ---------
+# ========= Config (Environment) =========
 ATHENA_DB        = os.environ.get("ATHENA_DB", "cost_comparison")
 ATHENA_TABLE     = os.environ.get("ATHENA_TABLE", "cross_cloud_offerings")
 ATHENA_WORKGROUP = os.environ.get("ATHENA_WORKGROUP", "primary")
-ATHENA_OUTPUT    = os.environ["ATHENA_OUTPUT"]  # required
+ATHENA_OUTPUT    = os.environ["ATHENA_OUTPUT"]  # required (s3://bucket/prefix)
 
 athena = boto3.client("athena")
 
-# --------- Heuristics for free-text inference ---------
+# ========= Heuristics for free-text inference =========
 EQUIV = {
     "kubernetes": [r"kubernetes", r"\beks\b", r"\baks\b", r"\bgke\b"],
     "object_storage": [r"\bs3\b", r"blob storage", r"cloud storage", r"object storage"],
@@ -36,7 +37,7 @@ def infer_group_from_text(q: Optional[str]) -> Optional[str]:
             return group
     return None
 
-# --------- Query building ---------
+# ========= Query building =========
 def build_where_clause(payload: Dict[str, Any]) -> str:
     where = ["price_usd IS NOT NULL"]
 
@@ -97,13 +98,13 @@ def build_where_clause(payload: Dict[str, Any]) -> str:
 
     # Provider filter
     if payload.get("providers"):
-        provs = [f"'{p.strip()}'" for p in payload["providers"] if str(p).strip()]
+        provs = [f"'{str(p).strip()}'" for p in payload["providers"] if str(p).strip()]
         if provs:
             where.append(f"provider IN ({', '.join(provs)})")
 
     # Region filter
     if payload.get("regions"):
-        regs = [f"'{r.strip()}'" for r in payload["regions"] if str(r).strip()]
+        regs = [f"'{str(r).strip()}'" for r in payload["regions"] if str(r).strip()]
         if regs:
             where.append(f"region IN ({', '.join(regs)})")
 
@@ -126,7 +127,7 @@ def build_query(payload: Dict[str, Any], top_k: int = 1) -> str:
     ORDER BY price_usd ASC, provider ASC
     """
 
-# --------- Athena execution ---------
+# ========= Athena execution =========
 def run_athena(sql: str, timeout_s: int = 45) -> List[Dict[str, Any]]:
     resp = athena.start_query_execution(
         QueryString=sql,
@@ -170,59 +171,127 @@ def run_athena(sql: str, timeout_s: int = 45) -> List[Dict[str, Any]]:
 
     return rows
 
-# --------- Bedrock Agent (OpenAPI tool) helpers ---------
-def _is_bedrock_event(evt: Any) -> bool:
-    return isinstance(evt, dict) and (
-        "messageVersion" in evt
-        or "function" in evt
-        or "operation" in evt
-        or "operationId" in evt
-        or ("agent" in evt and ("operation" in evt or "operationId" in evt))
-    )
+# ========= Bedrock helpers =========
+def _is_openapi_api_event(evt: dict) -> bool:
+    return isinstance(evt, dict) and "messageVersion" in evt and "apiPath" in evt and "httpMethod" in evt
 
-def _extract_openapi_call(evt: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def _bedrock_api_ok_json(event: dict, obj: dict) -> dict:
+    # Echo back EXACT apiPath + httpMethod from request
+    s = json.dumps(obj)
+    print(f"[dbg] respond API ok len={len(s)}")
+    return {
+        "messageVersion": "1.0",
+        "response": {
+            "actionGroup": event["actionGroup"],
+            "apiPath": event["apiPath"],
+            "httpMethod": event["httpMethod"],
+            "httpStatusCode": 200,
+            "responseBody": {
+                "application/json": {
+                    "body": s  # must be STRING
+                }
+            }
+        }
+    }
+
+def _bedrock_api_err_text(event: dict, msg: str, code: int = 400) -> dict:
+    return {
+        "messageVersion": "1.0",
+        "response": {
+            "actionGroup": event["actionGroup"],
+            "apiPath": event["apiPath"],
+            "httpMethod": event["httpMethod"],
+            "httpStatusCode": int(code),
+            "responseBody": {
+                "text/plain": { "body": msg }
+            }
+        }
+    }
+
+def _is_bedrock_function_event(evt: dict) -> bool:
+    # Legacy/alternate function-style events (no apiPath/httpMethod)
+    return isinstance(evt, dict) and "messageVersion" in evt and ("function" in evt or "operation" in evt or "operationId" in evt)
+
+def _bedrock_fn_ok_json(event: dict, obj: dict) -> dict:
+    s = json.dumps(obj)
+    fn = event.get("function") or event.get("operation") or event.get("operationId") or "getCrossCloudPricing"
+    ag = event.get("actionGroup", "openapi")
+    print(f"[dbg] respond FN ok ag={ag} fn={fn} len={len(s)}")
+    return {
+        "messageVersion": "1.0",
+        "response": {
+            "actionGroup": ag,
+            "function": fn,
+            "functionResponse": {
+                "responseBody": {
+                    "JSON": { "body": s }  # must be STRING
+                }
+            }
+        }
+    }
+
+def _bedrock_fn_err_text(event: dict, msg: str) -> dict:
+    fn = event.get("function") or event.get("operation") or event.get("operationId") or "unknown"
+    ag = event.get("actionGroup", "openapi")
+    return {
+        "messageVersion": "1.0",
+        "response": {
+            "actionGroup": ag,
+            "function": fn,
+            "functionResponse": {
+                "responseBody": { "TEXT": { "body": msg } }
+            }
+        }
+    }
+
+def _extract_openapi_call(evt: dict) -> Tuple[str, Dict[str, Any]]:
     """
-    Handles common Bedrock OpenAPI tool shapes:
-    - { messageVersion, actionGroup, function, parameters:[...] }
-    - { messageVersion, tool:'openapi', operation:'getCrossCloudPricing', parameters:[...] }
-    Returns (operationId, params_dict)
+    Merge parameters (list or dict) + requestBody/requestBodyJson.
+    Return (operationId, params)
     """
-    op = evt.get("function") or evt.get("operation") or evt.get("operationId") or "getCrossCloudPricing"
+    op = evt.get("function") or evt.get("operationId") or evt.get("operation") or "getCrossCloudPricing"
 
-    raw_params = evt.get("parameters", {})
-
-    def _val(v: Any) -> Any:
-        if not isinstance(v, dict):
-            return v
-        if "stringValue" in v:
-            return v["stringValue"]
-        if "listValue" in v:
-            return [_val(x) for x in v["listValue"]]
-        if "boolValue" in v:
-            return bool(v["boolValue"])
-        if "numberValue" in v:
-            return v["numberValue"]
+    def _val(v):
+        if not isinstance(v, dict): return v
+        if "stringValue" in v:  return v["stringValue"]
+        if "listValue"   in v:  return [_val(x) for x in v["listValue"]]
+        if "boolValue"   in v:  return bool(v["boolValue"])
+        if "numberValue" in v:  return v["numberValue"]
         return v
 
     params: Dict[str, Any] = {}
-    if isinstance(raw_params, list):
-        for item in raw_params:
-            name = item.get("name")
-            value = _val(item.get("value", {}))
-            if name:
-                params[name] = value
-    elif isinstance(raw_params, dict):
-        params = {k: _val(v) for k, v in raw_params.items()}
 
+    # parameters as list
+    if isinstance(evt.get("parameters"), list):
+        for item in evt["parameters"]:
+            name = item.get("name")
+            if name:
+                params[name] = _val(item.get("value", {}))
+
+    # parameters as dict
+    if isinstance(evt.get("parameters"), dict):
+        for k, v in evt["parameters"].items():
+            params[k] = _val(v)
+
+    # requestBody / requestBodyJson
+    rb = evt.get("requestBody") or evt.get("requestBodyJson")
+    if isinstance(rb, str):
+        try:
+            rb = json.loads(rb)
+        except Exception:
+            rb = None
+    if isinstance(rb, dict):
+        for k, v in rb.items():
+            params.setdefault(k, v)
+
+    print("[dbg] extracted op:", op, "params keys:", list(params.keys()))
     return op, params
 
 def _params_to_payload_for_pricing(params: Dict[str, Any], input_text: Optional[str]) -> Dict[str, Any]:
     prov = params.get("providers")
     regs = params.get("regions")
-    if isinstance(prov, str):
-        prov = [prov]
-    if isinstance(regs, str):
-        regs = [regs]
+    if isinstance(prov, str): prov = [prov]
+    if isinstance(regs, str): regs = [regs]
 
     payload: Dict[str, Any] = {
         "service_group": params.get("service_group"),
@@ -235,78 +304,97 @@ def _params_to_payload_for_pricing(params: Dict[str, Any], input_text: Optional[
     # drop null/empty
     return {k: v for k, v in payload.items() if v not in (None, "", [], {})}
 
-def _bedrock_ok_text(event: Dict[str, Any], text: str) -> Dict[str, Any]:
-    return {
-        "messageVersion": "1.0",
-        "response": {
-            "actionGroup": event.get("actionGroup", "openapi"),
-            "function": event.get("function") or event.get("operation") or "getCrossCloudPricing",
-            "functionResponse": {
-                "responseBody": {
-                    "TEXT": {"body": text}
-                }
-            }
-        }
-    }
-
-def _bedrock_ok_json(event: Dict[str, Any], obj: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "messageVersion": "1.0",
-        "response": {
-            "actionGroup": event.get("actionGroup", "openapi"),
-            "function": event.get("function") or event.get("operation") or "getCrossCloudPricing",
-            "functionResponse": {
-                "responseBody": {
-                    # IMPORTANT: body must be a STRING for JSON mode
-                    "JSON": {"body": json.dumps(obj)}
-                }
-            }
-        }
-    }
-
-# --------- Main handler ---------
+# ========= Main handler =========
 def lambda_handler(event, context):
     try:
-        # ---- Bedrock Agent (OpenAPI tool) path ----
-        if _is_bedrock_event(event):
-            op, params = _extract_openapi_call(event)
-            input_text = event.get("inputText") or event.get("input") or None
+        # --- Debug who called us ---
+        try:
+            print("[invoker] keys:", list(event.keys()) if isinstance(event, dict) else type(event))
+        except Exception:
+            pass
 
-            if op != "getCrossCloudPricing":
-                return _bedrock_ok_text(event, f"Unsupported operation: {op}")
+        # --- 1) Bedrock OpenAPI tool (API-style) path ---
+        if _is_openapi_api_event(event):
+            print("[dbg] API event:", event.get("apiPath"), event.get("httpMethod"))
+            op, params = _extract_openapi_call(event)
+            input_text = event.get("inputText") or event.get("input")
 
             payload = _params_to_payload_for_pricing(params, input_text)
-            top_k = int(payload.get("top_k", 1))
+            # accept "1" or 1
+            try:
+                top_k = int(str(payload.get("top_k", 1)))
+            except Exception:
+                top_k = 1
 
             if not any(payload.get(k) for k in ("service_group", "service_name", "query")):
-                return _bedrock_ok_text(
+                return _bedrock_api_err_text(
                     event,
-                    "Please provide a service_group (kubernetes, object_storage, functions, managed_sql, compute) "
-                    "or a service_name (e.g., EKS, S3). You may also add regions and providers."
+                    "Provide service_group (kubernetes/object_storage/functions/managed_sql/compute) "
+                    "or service_name; optional providers/regions/top_k."
                 )
 
             sql = build_query(payload, top_k=top_k)
+            print("[ATHENA] SQL (first 300):", sql[:300])
             rows = run_athena(sql)
             cheapest = min(rows, key=lambda r: r.get("price_usd", 1e99)) if rows else None
 
             assumptions: List[str] = []
-            group = (payload.get("service_group") or "").lower()
-            if group == "kubernetes":
+            g = (payload.get("service_group") or "").lower()
+            if g == "kubernetes":
                 assumptions.append("Compared control-plane hourly fees only; node/compute costs not included.")
-            elif group == "object_storage":
+            elif g == "object_storage":
                 assumptions.append("Compared per-GB per-month storage prices.")
-            elif group == "functions":
+            elif g == "functions":
                 assumptions.append("Compared per-request or per-GB-second prices.")
-            elif group == "compute":
+            elif g == "compute":
                 assumptions.append("Compared VM/instance hourly rates; size normalization not applied.")
 
             resp = {"query": payload, "assumptions": assumptions, "results": rows, "cheapest": cheapest}
-            return _bedrock_ok_json(event, resp)
+            return _bedrock_api_ok_json(event, resp)
 
-        # ---- API Gateway / direct invoke path ----
+        # --- 2) Bedrock function-style path (no apiPath/httpMethod) ---
+        if _is_bedrock_function_event(event):
+            op, params = _extract_openapi_call(event)
+            input_text = event.get("inputText") or event.get("input")
+            payload = _params_to_payload_for_pricing(params, input_text)
+            try:
+                top_k = int(str(payload.get("top_k", 1)))
+            except Exception:
+                top_k = 1
+
+            if not any(payload.get(k) for k in ("service_group", "service_name", "query")):
+                return _bedrock_fn_err_text(
+                    event,
+                    "Please provide a service_group (kubernetes, object_storage, functions, managed_sql, compute) "
+                    "or a service_name (e.g., EKS, S3). You may also add regions/providers/top_k."
+                )
+
+            sql = build_query(payload, top_k=top_k)
+            print("[ATHENA] SQL (first 300):", sql[:300])
+            rows = run_athena(sql)
+            cheapest = min(rows, key=lambda r: r.get("price_usd", 1e99)) if rows else None
+
+            assumptions: List[str] = []
+            g = (payload.get("service_group") or "").lower()
+            if g == "kubernetes":
+                assumptions.append("Compared control-plane hourly fees only; node/compute costs not included.")
+            elif g == "object_storage":
+                assumptions.append("Compared per-GB per-month storage prices.")
+            elif g == "functions":
+                assumptions.append("Compared per-request or per-GB-second prices.")
+            elif g == "compute":
+                assumptions.append("Compared VM/instance hourly rates; size normalization not applied.")
+
+            resp = {"query": payload, "assumptions": assumptions, "results": rows, "cheapest": cheapest}
+            return _bedrock_fn_ok_json(event, resp)
+
+        # --- 3) API Gateway / direct invoke path ---
         body = event.get("body") if isinstance(event, dict) else None
         payload = json.loads(body) if isinstance(body, str) else (body or event or {})
-        top_k = int((payload or {}).get("top_k", 1))
+        try:
+            top_k = int(str((payload or {}).get("top_k", 1)))
+        except Exception:
+            top_k = 1
 
         if not any((payload or {}).get(k) for k in ("service_group", "service_name", "query")):
             return {
@@ -316,18 +404,19 @@ def lambda_handler(event, context):
             }
 
         sql = build_query(payload, top_k=top_k)
+        print("[ATHENA] SQL (first 300):", sql[:300])
         rows = run_athena(sql)
         cheapest = min(rows, key=lambda r: r.get("price_usd", 1e99)) if rows else None
 
         assumptions: List[str] = []
-        group = (payload.get("service_group") or "").lower()
-        if group == "kubernetes":
+        g = (payload.get("service_group") or "").lower()
+        if g == "kubernetes":
             assumptions.append("Compared control-plane hourly fees only; node/compute costs not included.")
-        elif group == "object_storage":
+        elif g == "object_storage":
             assumptions.append("Compared per-GB per-month storage prices.")
-        elif group == "functions":
+        elif g == "functions":
             assumptions.append("Compared per-request or per-GB-second prices.")
-        elif group == "compute":
+        elif g == "compute":
             assumptions.append("Compared VM/instance hourly rates; size normalization not applied.")
 
         resp = {"query": payload, "assumptions": assumptions, "results": rows, "cheapest": cheapest}
@@ -336,7 +425,12 @@ def lambda_handler(event, context):
 
     except Exception as e:
         # Return Agent-shaped error if the caller was Bedrock; else API-GW 500
-        if _is_bedrock_event(event):
-            return _bedrock_ok_text(event, f"Error: {str(e)}")
+        try:
+            if _is_openapi_api_event(event):
+                return _bedrock_api_err_text(event, f"Error: {str(e)}", code=500)
+            if _is_bedrock_function_event(event):
+                return _bedrock_fn_err_text(event, f"Error: {str(e)}")
+        except Exception:
+            pass
         return {"statusCode": 500, "headers": {"Content-Type": "application/json"},
                 "body": json.dumps({"error": str(e)})}
