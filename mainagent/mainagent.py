@@ -65,6 +65,7 @@ RUN_ID = os.environ.get("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%d
 # AWS clients
 athena  = boto3.client("athena", region_name=os.environ.get("AWS_REGION", None))
 bedrock = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+s3      = boto3.client("s3", region_name=os.environ.get("AWS_REGION", None))
 
 # -------------------------------------------------
 # 2) Local modules
@@ -282,6 +283,27 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame,
         }]
 
 # -------------------------------------------------
+# 5.5) S3 summary helpers (NEW)
+def _s3_key_join(*parts: str) -> str:
+    return "/".join([p.strip("/") for p in parts if p is not None and p != ""])
+
+def write_summary_json_to_s3(summary_obj: dict, run_id: str) -> str:
+    """
+    Write summary.json to s3://RESULTS_BUCKET/RESULTS_PREFIX/runs/<run_id>/summary.json
+    Uses no-store cache control so frontends always get fresh content.
+    """
+    key = _s3_key_join(RESULTS_PREFIX, "runs", run_id, "summary.json")
+    body = json.dumps(summary_obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    s3.put_object(
+        Bucket=RESULTS_BUCKET,
+        Key=key,
+        Body=body,
+        ContentType="application/json",
+        CacheControl="no-store, no-cache, must-revalidate"
+    )
+    return f"s3://{RESULTS_BUCKET}/{key}"
+
+# -------------------------------------------------
 # 6) Main handler
 def handler(event=None, context=None):
     print(f"[cfg] DB={ATHENA_DB} TABLE={ATHENA_TABLE} OUT={ATHENA_OUTPUT} RECS_TABLE={ATHENA_RECS_TABLE}")
@@ -374,18 +396,57 @@ def handler(event=None, context=None):
         r["run_id"] = RUN_ID
         r["created_at"] = now_iso
 
-    # Write to S3 & ensure Athena table
+    # Write detailed rows (CSV) & ensure Athena table
     s3_prefix_uri = write_recommendations_csv_to_s3(recs, run_id=RUN_ID)
     build_recommendations_table_if_needed(s3_prefix_uri, table_name=ATHENA_RECS_TABLE)
 
-    total = sum(float(r.get("est_monthly_saving_usd", 0.0)) for r in recs)
-    print(f"[done] wrote {len(recs)} recommendations, est_total=${round(total,2)} to {s3_prefix_uri}")
+    # Final totals
+    total = round(sum(float(r.get("est_monthly_saving_usd", 0.0)) for r in recs), 2)
+
+    # Compose compact summary JSON for instant consumption by UI
+    summary_obj = {
+        "run_id": RUN_ID,
+        "created_at": now_iso,
+        "use_llm": USE_LLM,
+        "counts": {
+            "total_recommendations": len(recs),
+            "by_category": {k: int(sum(1 for r in recs if r.get("category","")==k)) for k in by_cat.keys()},
+            "by_source":   {k: int(sum(1 for r in recs if r.get("source_note","")==k)) for k in by_src.keys()},
+        },
+        "savings_usd": {
+            "monthly_total": total,
+            "by_category": {k: round(v, 2) for k, v in by_cat.items()},
+            "by_source":   {k: round(v, 2) for k, v in by_src.items()},
+        },
+        "storage": {
+            "athena_recs_table": ATHENA_RECS_TABLE,
+            "rows_csv_prefix": s3_prefix_uri,  # folder where the detailed CSV lives
+        },
+        # keep preview small for instant UI; tune N as desired
+        "preview": recs[:5],
+    }
+
+    # Write summary.json for instant UI fetch
+    summary_s3_uri = write_summary_json_to_s3(summary_obj, RUN_ID)
+
+    # Optional local write during __main__ runs
+    if os.environ.get("WRITE_LOCAL_SUMMARY", "").lower() in ("1", "true", "yes"):
+        try:
+            local_path = os.environ.get("LOCAL_SUMMARY_PATH", "summary.json")
+            Path(local_path).write_text(json.dumps(summary_obj, indent=2, ensure_ascii=False))
+            print(f"[done] local summary written to {local_path}")
+        except Exception as e:
+            print(f"[warn] failed to write local summary.json: {e}")
+
+    print(f"[done] wrote {len(recs)} recommendations, est_total=${total} to {s3_prefix_uri}")
+    print(f"[done] summary.json -> {summary_s3_uri}")
 
     return {
         "count": len(recs),
-        "est_total_monthly_saving_usd": round(total, 2),
+        "est_total_monthly_saving_usd": total,
         "athena_recs_table": ATHENA_RECS_TABLE,
         "s3_prefix": s3_prefix_uri,
+        "summary_s3_uri": summary_s3_uri,  # NEW
         "use_llm": USE_LLM,
         "preview": recs[:3],
         "run_id": RUN_ID,
