@@ -3,3 +3,6 @@ pandas
 pyarrow
 dotenv
 streamlit
+botocore
+numpy
+python-dotenv
