@@ -6,3 +6,13 @@ streamlit
 botocore
 numpy
 python-dotenv
+prophet
+plotly
+scikit-learn
+scipy
+seaborn
+statsmodels
+streamlit-extras
+streamlit-plotly-events
+streamlit-toggle
+tqdm
