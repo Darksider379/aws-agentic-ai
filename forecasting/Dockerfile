@@ -14,16 +14,15 @@ ENV AWS_REGION=us-east-1 \
     RESULTS_BUCKET=athena-query-results-agentic-ai \
     RESULTS_PREFIX=cost-agent-v2 \
     ATHENA_FORECAST_TABLE=forecast_daily_v1 \
-    FORECAST_TABLE_PREFIX=cost-agent-v2 \
+    FORECAST_TABLE_PREFIX=forecast_table \
     FORECAST_DEFAULT_DAYS=90 \
+    CONFIG_INI_DISABLE=1 \
     COST_MODE=unblended \
     EXCLUDE_FEE=true \
     EXCLUDE_NON_USAGE_PRODUCTS=true \
     CLIP_OUTLIERS=true \
-    OUTLIER_Q=0.98 \
-    OUTLIER_MULT=1.20 \
-    FORECAST_DEFAULT_DAYS=90 \
-    CONFIG_INI_DISABLE=1
+    OUTLIER_Q=0.90 \
+    OUTLIER_MULT=0.95
 
 
 CMD ["forecasting.lambda_handler"]
