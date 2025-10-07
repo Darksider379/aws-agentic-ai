@@ -47,7 +47,7 @@ ATHENA_TABLE      = os.environ["ATHENA_TABLE"]
 ATHENA_WORKGROUP  = os.environ.get("ATHENA_WORKGROUP", "primary")
 ATHENA_OUTPUT     = os.environ["ATHENA_OUTPUT"]
 RESULTS_BUCKET    = os.environ["RESULTS_BUCKET"]
-RESULTS_PREFIX    = os.environ.get("RESULTS_PREFIX", "cost-agent")
+RESULTS_PREFIX    = os.environ.get("RESULTS_PREFIX", "cost-agent-v2")
 ATHENA_RECS_TABLE = os.environ.get("ATHENA_RECS_TABLE", "recommendations_v2")
 
 # Optional Bedrock/LLM
@@ -59,13 +59,10 @@ BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-pro-v1:0")
 LLM_ABS_CAP      = float(os.environ.get("LLM_ABS_CAP", "100000"))    # $/month
 LLM_REL_CAP_PCT  = float(os.environ.get("LLM_REL_CAP_PCT", "30"))    # percent
 
-# Run identifier (for Athena partitioning)
-RUN_ID = os.environ.get("RUN_ID") or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-# AWS clients
+# AWS clients (region auto from env in Lambda; don't set AWS_REGION yourself)
 athena  = boto3.client("athena", region_name=os.environ.get("AWS_REGION", None))
 bedrock = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
-s3      = boto3.client("s3", region_name=os.environ.get("AWS_REGION", None))
+s3      = boto3.client("s3",     region_name=os.environ.get("AWS_REGION", None))
 
 # -------------------------------------------------
 # 2) Local modules
@@ -191,8 +188,7 @@ def _converse_json_array(instruction: str, system_text: str | None = None,
     messages2 = [
         {"role": "user", "content": [{"text": few_shot}]},
         {"role": "assistant", "content": [{"text":
-            '[{"category":"EC2 Right-size","subtype":"m5.large→m7g.large","recommendation":"...",'
-            '"estimated_saving_usd":100.0,"region":"us-east-1"}]'}]},
+            '[{"category":"EC2 Right-size","subtype":"m5.large→m7g.large","recommendation":"...","estimated_saving_usd":100.0,"region":"us-east-1"}]'}]},
         {"role": "user", "content": [{"text": instruction}]},
     ]
     kwargs2 = {
@@ -229,9 +225,7 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame,
     if df_summary.empty:
         return []
 
-    # Allow-list of (service, region) to keep the model grounded
     allow_lines = "\n".join(f"- {svc} @ {reg}" for svc, reg in allowed_pairs)
-
     summary_csv = df_summary.to_csv(index=False)
     system_text = (
         "You are a precise AWS FinOps assistant. "
@@ -245,9 +239,7 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame,
         "2) Output MUST be a JSON array ONLY. No backticks, no commentary, no extra fields.\n"
         "3) Each array item MUST have exactly these keys: "
         "category, subtype, recommendation, estimated_saving_usd, region.\n"
-        'Example: [{"category":"EC2 Right-size","subtype":"m5.large→m7g.large",'
-        '"recommendation":"Move m5.large to m7g.large where supported",'
-        '"estimated_saving_usd":120.0,"region":"us-east-1"}]\n'
+        'Example: [{"category":"EC2 Right-size","subtype":"m5.large→m7g.large","recommendation":"Move m5.large to m7g.large where supported","estimated_saving_usd":120.0,"region":"us-east-1"}]\n'
         "\nCSV:\n"
         f"{summary_csv}\n"
         "\nReturn ONLY the JSON array."
@@ -270,7 +262,6 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame,
         return out
     except Exception as e:
         print(f"[bedrock] converse failed or parse error: {e}")
-        # Conservative fallback so pipeline continues
         return [{
             "category": "S3 Storage Optimization",
             "subtype": "Standard→IA (10-30%)",
@@ -283,14 +274,13 @@ def ask_llm_for_recommendations_as_list(df_summary: pd.DataFrame,
         }]
 
 # -------------------------------------------------
-# 5.5) S3 summary helpers (NEW)
+# 5.5) S3 summary helpers
 def _s3_key_join(*parts: str) -> str:
     return "/".join([p.strip("/") for p in parts if p is not None and p != ""])
 
 def write_summary_json_to_s3(summary_obj: dict, run_id: str) -> str:
     """
     Write summary.json to s3://RESULTS_BUCKET/RESULTS_PREFIX/runs/<run_id>/summary.json
-    Uses no-store cache control so frontends always get fresh content.
     """
     key = _s3_key_join(RESULTS_PREFIX, "runs", run_id, "summary.json")
     body = json.dumps(summary_obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -304,9 +294,14 @@ def write_summary_json_to_s3(summary_obj: dict, run_id: str) -> str:
     return f"s3://{RESULTS_BUCKET}/{key}"
 
 # -------------------------------------------------
-# 6) Main handler
+# 6) Main handler (per-invocation run_id)
 def handler(event=None, context=None):
-    print(f"[cfg] DB={ATHENA_DB} TABLE={ATHENA_TABLE} OUT={ATHENA_OUTPUT} RECS_TABLE={ATHENA_RECS_TABLE}")
+    # Per-invocation run_id; include microseconds to avoid same-second collisions
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    print(f"[cfg] DB={ATHENA_DB} TABLE={ATHENA_TABLE} OUT={ATHENA_OUTPUT} RECS_TABLE={ATHENA_RECS_TABLE} RUN_ID={run_id}")
+
     hourly = hourly_usage_breakdown()
     print(f"[athena] hourly rows: {len(hourly)}")
 
@@ -355,7 +350,7 @@ def handler(event=None, context=None):
             if v > ABS_CAP:
                 r["assumption"] = (r.get("assumption", "") + " | capped_abs").strip(" |")
                 v = ABS_CAP
-            # Relative cap to observed spend for service+region
+            # Relative cap
             base = _observed_spend_for_rec(r)
             if base > 0:
                 limit = REL_CAP * base
@@ -391,13 +386,12 @@ def handler(event=None, context=None):
         print(f"[QC] one-time savings (not counted in monthly total): ${round(one_time_total,2)}")
 
     # Stamp run_id + created_at
-    now_iso = datetime.now(timezone.utc).isoformat()
     for r in recs:
-        r["run_id"] = RUN_ID
+        r["run_id"] = run_id
         r["created_at"] = now_iso
 
     # Write detailed rows (CSV) & ensure Athena table
-    s3_prefix_uri = write_recommendations_csv_to_s3(recs, run_id=RUN_ID)
+    s3_prefix_uri = write_recommendations_csv_to_s3(recs, run_id=run_id)
     build_recommendations_table_if_needed(s3_prefix_uri, table_name=ATHENA_RECS_TABLE)
 
     # Final totals
@@ -405,7 +399,7 @@ def handler(event=None, context=None):
 
     # Compose compact summary JSON for instant consumption by UI
     summary_obj = {
-        "run_id": RUN_ID,
+        "run_id": run_id,
         "created_at": now_iso,
         "use_llm": USE_LLM,
         "counts": {
@@ -420,14 +414,12 @@ def handler(event=None, context=None):
         },
         "storage": {
             "athena_recs_table": ATHENA_RECS_TABLE,
-            "rows_csv_prefix": s3_prefix_uri,  # folder where the detailed CSV lives
+            "rows_csv_prefix": s3_prefix_uri,
         },
-        # keep preview small for instant UI; tune N as desired
         "preview": recs[:5],
     }
 
-    # Write summary.json for instant UI fetch
-    summary_s3_uri = write_summary_json_to_s3(summary_obj, RUN_ID)
+    summary_s3_uri = write_summary_json_to_s3(summary_obj, run_id=run_id)
 
     # Optional local write during __main__ runs
     if os.environ.get("WRITE_LOCAL_SUMMARY", "").lower() in ("1", "true", "yes"):
@@ -446,10 +438,10 @@ def handler(event=None, context=None):
         "est_total_monthly_saving_usd": total,
         "athena_recs_table": ATHENA_RECS_TABLE,
         "s3_prefix": s3_prefix_uri,
-        "summary_s3_uri": summary_s3_uri,  # NEW
+        "summary_s3_uri": summary_s3_uri,
         "use_llm": USE_LLM,
         "preview": recs[:3],
-        "run_id": RUN_ID,
+        "run_id": run_id,
     }
 
 # -------------------------------------------------
@@ -457,3 +449,4 @@ def handler(event=None, context=None):
 if __name__ == "__main__":
     out = handler()
     print(json.dumps(out, indent=2))
+
