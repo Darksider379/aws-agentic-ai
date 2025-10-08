@@ -1,0 +1,84 @@
+aws lambda add-permission \
+  --region us-east-1 \
+  --function-name forecasting-proxy \
+  --statement-id bedrock-XCET2ZMQI6 \
+  --action lambda:InvokeFunction \
+  --principal bedrock.amazonaws.com \
+  --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/XCET2ZMQI6
+
+
+  aws lambda add-permission \
+    --region us-east-1 \
+    --function-name forecasting-proxy \
+    --statement-id bedrock-GXY0ETOUIJ \
+    --action lambda:InvokeFunction \
+    --principal bedrock.amazonaws.com \
+    --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/GXY0ETOUIJ
+
+    aws lambda add-permission \
+      --region us-east-1 \
+      --function-name forecasting-proxy \
+      --statement-id bedrock-I4PLMIXJPK \
+      --action lambda:InvokeFunction \
+      --principal bedrock.amazonaws.com \
+      --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/I4PLMIXJPK
+
+
+    aws lambda add-permission \
+      --region us-east-1 \
+      --function-name forecasting-proxy \
+      --statement-id bedrock-IO47D3HMWR \
+      --action lambda:InvokeFunction \
+      --principal bedrock.amazonaws.com \
+      --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR
+
+
+
+      aws lambda add-permission \
+        --region us-east-1 \
+        --function-name forecasting-proxy \
+        --statement-id bedrock-FFPLLV9IDZ \
+        --action lambda:InvokeFunction \
+        --principal bedrock.amazonaws.com \
+        --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/FFPLLV9IDZ
+
+        aws lambda add-permission \
+          --region us-east-1 \
+          --function-name forecasting-proxy \
+          --statement-id bedrock-1RYRFRNQNF \
+          --action lambda:InvokeFunction \
+          --principal bedrock.amazonaws.com \
+          --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/1RYRFRNQNF
+
+
+
+aws ecr get-login-password --region us-east-1 \
+| docker login --username AWS --password-stdin 784161806232.dkr.ecr.us-east-1.amazonaws.com
+
+docker build -t forecasting:latest_v4 .
+docker tag forecasting:latest_v4 784161806232.dkr.ecr.us-east-1.amazonaws.com/forecasting:latest_v4
+docker push 784161806232.dkr.ecr.us-east-1.amazonaws.com/forecasting:latest_v4
+
+
+########Granting permissions in 1 go############
+
+lambda_functions=(
+    "anomaly-http-proxy"
+    "forecasting"
+    "forecasting-proxy"
+    "finops-agent-proxy"
+    "finops-agent"
+    "cross-cloud-pricing"
+    "anomaly-handler"
+)
+
+
+for i in "${lambda_functions[@]}"; do
+    aws lambda add-permission \
+        --region us-east-1 \
+        --function-name "$i" \
+        --statement-id bedrock-OLYTGC8D37 \
+        --action lambda:InvokeFunction \
+        --principal bedrock.amazonaws.com \
+        --source-arn arn:aws:bedrock:us-east-1:784161806232:agent/IO47D3HMWR/alias/OLYTGC8D37
+done
