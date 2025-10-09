@@ -14,5 +14,7 @@ def set_config():
     ATHENA_WORKGROUP  = os.getenv("ATHENA_WORKGROUP", "primary")
     ATHENA_OUTPUT_S3  = os.getenv("ATHENA_OUTPUT", "s3://athena-query-results-agentic-ai/athena/").strip()  # e.g. s3://athena-query-results-agentic-ai/cost-agent-v2/recommendations/
     TABLE_FQN = f"{ATHENA_DB}.{ATHENA_TABLE_RECS}"
+    FORECAST_PROXY_ARN = "arn:aws:lambda:us-east-1:784161806232:function:forecasting-proxy"
 
-    return REGION, BEDROCK_AGENT_ID, BEDROCK_ALIAS_ID, ARN_FINOPS_PROXY, ARN_ANOMALY_PROXY, ATHENA_DB, ATHENA_TABLE_RECS, ATHENA_WORKGROUP, ATHENA_OUTPUT_S3, TABLE_FQN
+
+    return FORECAST_PROXY_ARN, REGION, BEDROCK_AGENT_ID, BEDROCK_ALIAS_ID, ARN_FINOPS_PROXY, ARN_ANOMALY_PROXY, ATHENA_DB, ATHENA_TABLE_RECS, ATHENA_WORKGROUP, ATHENA_OUTPUT_S3, TABLE_FQN

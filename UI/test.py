@@ -24,6 +24,4 @@ while True:
         break
 
 res = ath.get_query_results(QueryExecutionId=qid)
-
 print(res)
-
