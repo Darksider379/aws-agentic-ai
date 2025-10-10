@@ -39,7 +39,8 @@ def fetch_recs_by_run(run_id: str) -> pd.DataFrame:
       category,
       subtype,
       assumption,
-      action_sql_hint
+      action_sql_hint,
+      rline_item_resource_id
     FROM {TABLE_FQN}
     WHERE run_id = '{rid}'
     ORDER BY category

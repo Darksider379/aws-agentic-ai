@@ -1,59 +1,72 @@
 # recommendations/write_recommendations_csv_to_s3.py
+import os
 import io
 import csv
-import time
+from typing import List, Dict
+from datetime import datetime, timezone
 import boto3
-from typing import List, Dict, Optional
-import os
 
-s3 = boto3.client("s3")
+RESULTS_BUCKET = os.environ["RESULTS_BUCKET"]
+RESULTS_PREFIX = os.environ.get("RESULTS_PREFIX", "cost-agent-v2")
 
-def write_recommendations_csv_to_s3(recs: List[Dict], run_id: Optional[str] = None) -> str:
+s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", None))
+
+# IMPORTANT: This order must match the Athena table columns exactly.
+CSV_COLUMNS = [
+    "run_id",
+    "created_at",
+    "category",
+    "subtype",
+    "region",
+    "assumption",
+    "metric",
+    "est_monthly_saving_usd",
+    "one_time_saving_usd",
+    "action_sql_hint",
+    "source_note",
+    "rline_item_resource_id",  # <-- ensure this is written
+]
+
+def _coerce(v):
+    if v is None:
+        return ""
+    if isinstance(v, (float, int)):
+        # keep numbers compact
+        return str(v)
+    return str(v)
+
+def write_recommendations_csv_to_s3(recs: List[Dict], run_id: str) -> str:
     """
-    Write recommendations to S3 as CSV and return the S3 prefix URI.
-    Adds 'run_id' and 'created_at' columns so Athena can filter the latest run.
-    Keeps 'one_time_saving_usd' optional (defaults to 0.0).
+    Write all recommendation rows to:
+      s3://{RESULTS_BUCKET}/{RESULTS_PREFIX}/recommendations/run={run_id}/rows.csv
+    with the header matching CSV_COLUMNS exactly.
     """
-    if not recs:
-        recs = []
-
-    bucket = os.environ["RESULTS_BUCKET"]
-    prefix = os.environ.get("RESULTS_PREFIX", "cost-agent")
-    ts = int(time.time())
-    # If run_id is provided, include it in the object key for easier browsing
-    key = f"{prefix}/recommendations/{run_id or 'run'}/{ts}.csv"
-
-    cols = [
-        "run_id",
-        "created_at",
-        "category",
-        "subtype",
-        "region",
-        "assumption",
-        "metric",
-        "est_monthly_saving_usd",
-        "one_time_saving_usd",
-        "action_sql_hint",
-        "source_note",
-    ]
-
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(cols)
+    # ensure required keys exist so DictWriter doesn't drop them
+    rows = []
     for r in recs:
-        w.writerow([
-            r.get("run_id", run_id or ""),
-            r.get("created_at", ""),
-            r.get("category", ""),
-            r.get("subtype", ""),
-            r.get("region", ""),
-            r.get("assumption", ""),
-            r.get("metric", ""),
-            float(r.get("est_monthly_saving_usd", 0.0)),
-            float(r.get("one_time_saving_usd", 0.0)),
-            r.get("action_sql_hint", ""),
-            r.get("source_note", ""),
-        ])
+        row = {k: _coerce(r.get(k, "")) for k in CSV_COLUMNS}
+        rows.append(row)
 
-    s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue().encode("utf-8"), ContentType="text/csv")
-    return f"s3://{bucket}/{prefix}/recommendations/"
+    # CSV in-memory
+    buf = io.StringIO()
+    w = csv.DictWriter(
+        buf,
+        fieldnames=CSV_COLUMNS,
+        extrasaction="ignore",
+        quoting=csv.QUOTE_MINIMAL,
+        lineterminator="\n",
+    )
+    w.writeheader()
+    for row in rows:
+        w.writerow(row)
+
+    # put to S3 under a unique path per run
+    key = f"{RESULTS_PREFIX.strip('/')}/recommendations/run={run_id}/rows.csv"
+    s3.put_object(
+        Bucket=RESULTS_BUCKET,
+        Key=key,
+        Body=buf.getvalue().encode("utf-8"),
+        ContentType="text/csv",
+        CacheControl="no-store, no-cache, must-revalidate",
+    )
+    return f"s3://{RESULTS_BUCKET}/{RESULTS_PREFIX.strip('/')}/recommendations/"
