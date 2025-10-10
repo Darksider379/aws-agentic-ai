@@ -21,6 +21,9 @@
     
     # ---- Copy source ----
     COPY . .
+    # ---- Streamlit config ----
+    #RUN mkdir -p .streamlit
+    #COPY .streamlit/config.toml .streamlit/config.toml
     
     # ---- Environment variables (editable defaults) ----
     # AWS / Athena / FinOps Agent configuration
@@ -47,4 +50,5 @@
       CMD curl -f http://localhost:8501/_stcore/health || exit 1
     
     # ---- Run Streamlit ----
-    CMD ["streamlit", "run", "app_ui.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    #CMD ["streamlit", "run", "app_ui.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    CMD ["streamlit", "run", "app_ui.py","--server.address=0.0.0.0","--server.port=8501","--server.headless=true","--server.enableCORS=false","--server.enableXsrfProtection=false","--server.enableWebsocketCompression=false","--browser.gatherUsageStats=false"]
