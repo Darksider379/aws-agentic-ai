@@ -33,12 +33,12 @@ def header(st):
         st.metric("Session", st.session_state.session_id[:8])
         st.metric("Region", REGION)
 
-    tab_chat, tab_reco, tab_anom, tab_fore, tab_cost = st.tabs(
-        ["💬 Chat", "🛠️ Recommendations", "⚠️ Anomalies", "📈 Forecast", "💵 Costs"]
+    tab_chat, tab_reco, tab_fore, tab_cost = st.tabs(
+        ["💬 Chat", "🛠️ Recommendations", "📈 Forecast", "💵 Costs/Anomalies"]
     )
 
     chat(st,tab_chat)
-    anomalies(st,tab_anom)
+    #anomalies(st,tab_anom)
     cost(st,tab_cost)
     forecast(st,tab_fore)
     recommendations(st,tab_reco)

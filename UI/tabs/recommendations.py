@@ -38,7 +38,7 @@ def recommendations(st,tab_reco):
             status_slot.info(f"Using run_id = `{rid}` • Rows = {len(df)}")
             with render_slot.container():
                 cats = sorted(df["category"].fillna("Uncategorized").unique()) if "category" in df.columns else ["All"]
-                cols_to_show = [c for c in ["subtype", "assumption", "action_sql_hint"] if c in df.columns]
+                cols_to_show = [c for c in ["subtype", "assumption", "action_sql_hint", "rline_item_resource_id"] if c in df.columns]
                 for i in range(0, len(cats), 2):
                     c1, c2 = st.columns(2)
                     for j, col in enumerate((c1, c2)):
