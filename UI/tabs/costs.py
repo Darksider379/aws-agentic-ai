@@ -314,7 +314,7 @@ def cost(st, tab_cost):
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Avg Daily Cost", f"${daily_avg:,.2f}")
-        m2.metric("Spike Count", f"{spike_count}")
+ #       m2.metric("Spike Count", f"{spike_count}")
         m3.metric("Max Day", max_label)
 
         # ------------------- Chart (robust ticks + domain) -------------------
